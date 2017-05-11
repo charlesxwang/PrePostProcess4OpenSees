@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import os
 
 class FEMtools:
     """
@@ -15,6 +16,7 @@ class FEMtools:
         self.nodes = nodes
         self.elements = elements
         self.selectedNodes = np.copy(nodes)
+        self.selectedElements = np.copy(elements)
     
 
     def coords_to_string(self, x,y,z):
@@ -54,6 +56,39 @@ class FEMtools:
         x = rho * np.cos(phi)
         y = rho * np.sin(phi)
         return(x, y)
+    
+    def PolyArea(self,x,y):
+        return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
+    
+    #unit normal vector of plane defined by points a, b, and c
+    def unit_normal(self,a, b, c):
+        x = np.linalg.det([[1,a[1],a[2]],
+                       [1,b[1],b[2]],
+                       [1,c[1],c[2]]])
+        y = np.linalg.det([[a[0],1,a[2]],
+                        [b[0],1,b[2]],
+                        [c[0],1,c[2]]])
+        z = np.linalg.det([[a[0],a[1],1],
+                        [b[0],b[1],1],
+                        [c[0],c[1],1]])
+        magnitude = (x**2 + y**2 + z**2)**.5
+        return (x/magnitude, y/magnitude, z/magnitude)
+
+    #area of polygon poly
+    def poly_area(self,poly):
+        if len(poly) < 3: # not a plane - no area
+            return 0
+        total = [0, 0, 0]
+        N = len(poly)
+        for i in range(N):
+            vi1 = poly[i]
+            vi2 = poly[(i+1) % N]
+            prod = np.cross(vi1, vi2)
+            total[0] += prod[0]
+            total[1] += prod[1]
+            total[2] += prod[2]
+        result = np.dot(total, self.unit_normal(poly[0], poly[1], poly[2]))
+        return abs(result/2)
 
     def getNbyLoc(self,x=[],y=[],z=[],tol=0.00001):
         nodes = self.selectedNodes
@@ -107,6 +142,7 @@ class FEMtools:
             print('zmin',z[0],'zmax',z[1])
             zloc = np.where((nodes[:,3]>=z[0] - tol) & (nodes[:,3]<=z[1] + tol))
             nodes = nodes[zloc]
+            print('selected:---------',nodes)
         except:
             print("z location range not given.")
         print('nodes selected: ',nodes.shape)
@@ -122,6 +158,7 @@ class FEMtools:
 
     def selectAll(self):
         self.selectedNodes = self.nodes
+        self.selectedElements = self.elements
         print('All nodes are selected')
 
 
@@ -177,10 +214,88 @@ class FEMtools:
                 for line in fin:
                     fout.write(line.replace('"', ''))
 
+    def getElementsBySelectedNodes(self, nodes=[],elements=[]):
+        if nodes==[]: nodes = self.selectedNodes
+        if elements==[]: elements = self.elements.astype(int)
+        elements = elements.astype(int)
+        nodesIndex = nodes[:,0].astype(int)
+        
+        print(nodesIndex)
+        selectedElementIndex=[]
+        for i in range(0, len(nodesIndex)):
+            for j in range(0, len(elements[:,0])):
+                if nodesIndex[i] in elements[j,:]:
+                    selectedElementIndex.append(j)
+                    break
+        selectedElementIndex = list(set(selectedElementIndex))
+        self.selectedElements = elements[np.array(selectedElementIndex),:]
+        print('Selected elements index: ')
+        print(selectedElementIndex)
+        return self
+        #y[np.array([0,2,4])]
+        '''
+        eLeloc = np.where((elements[:,0] == nodesIndex) | \
+                          (elements[:,1] == nodesIndex) | \
+                          (elements[:,2] == nodesIndex) | \
+                          (elements[:,3] == nodesIndex) | \
+                          (elements[:,4] == nodesIndex) | \
+                          (elements[:,5] == nodesIndex) | \
+                          (elements[:,6] == nodesIndex) | \
+                          (elements[:,7] == nodesIndex)  )
+        print(elements[eLeloc,:])
+        print(eLeloc)
+        print(elements)
+        '''
+
+    def getAreaByNodes(self,nodesIndex):
+        nodes = self.nodes[np.array(nodesIndex)-1,1:4]
+        print(type(nodes))
+        area = self.poly_area(nodes)
+        print('nodes: ',nodes)
+        print('area is: ', area)
+        return area
+
+    
+    
+    
+    def applySurfaceLoad(self,filename='surfaceLoad',elements=[],nodes=[],pressure=0.0,area=0.0,options=[]):
+        if nodes==[]: nodes = self.selectedNodes
+        if elements==[]: elements = self.selectedElements.astype(int)
+        elements = elements.astype(int)
+        nodesIndex = nodes[:,0].astype(int)
+        os.system('rm ../data/'+filename+'.tcl')
+        AllForce = 0
+        AllElementArea = 0
+        # calc the area of elements on which surface load will be applied
+        for element in elements:
+            tempNodeList = []
+            for node in element:
+                if node in nodesIndex:
+                    tempNodeList.append(node)
+            if tempNodeList:
+                EleArea = self.getAreaByNodes(tempNodeList)
+                AllElementArea += EleArea
+        k = area/AllElementArea
+        with open('../data/'+filename+'.tcl', 'a') as LoadName_Tclfile:
+            for element in elements:
+                tempNodeList = []
+                for node in element:
+                    if node in nodesIndex:
+                        tempNodeList.append(node)
+                if tempNodeList:
+                    EleArea = self.getAreaByNodes(tempNodeList) * k
+                    force = pressure*EleArea/len(tempNodeList)
+                    LoadName_Tclfile.write('set NodeLoad '+str(force)+' \n')
+                    for node in tempNodeList:
+                        LoadName_Tclfile.write('load '+str(int(node))+' '+options+' \n')
+                    AllForce += pressure*EleArea
+        print('preasure applied is: ',AllForce/area)
 
 
 
-#print(nodes_new.shape,self.elements.shape)
+
+
+
 
 
 
